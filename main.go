@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -26,24 +27,28 @@ func main() {
 	os.Exit(status)
 }
 
-func initiliazeLogger() *log.Logger {
-	lFile := os.Getenv("LINKO_LOG_FILE")
+func initiliazeLogger(logFile string) (*log.Logger, error) {
+	lFile := os.Getenv(logFile)
 	if lFile == "" {
-		return log.New(os.Stderr, "", log.LstdFlags)
+		return log.New(os.Stderr, "", log.LstdFlags), nil
 	}
 
 	f, err := os.OpenFile(lFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
-		log.Fatalf("Could not open file for logging %v", err)
+		return nil, err
 	}
 
 	mw := io.MultiWriter(os.Stderr, f)
 
-	return log.New(mw, "", log.LstdFlags)
+	return log.New(mw, "", log.LstdFlags), nil
 }
 
 func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir string) int {
-	logger := initiliazeLogger()
+	logger, err := initiliazeLogger("LINKO_LOG_FILE")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Could not initialise logger: %v", err)
+		return 1
+	}
 
 	st, err := store.New(dataDir, logger)
 	if err != nil {
