@@ -21,6 +21,7 @@ func main() {
 
 	status := run(ctx, cancel, *httpPort, *dataDir)
 	cancel()
+
 	os.Exit(status)
 }
 
