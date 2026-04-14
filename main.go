@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -25,18 +26,32 @@ func main() {
 	os.Exit(status)
 }
 
-func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir string) int {
-	f, err := os.OpenFile("linko.access.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	accessLogger := log.New(f, "INFO: ", log.LstdFlags)
-	standardLogger := log.New(os.Stderr, "DEBUG: ", log.LstdFlags)
+func initiliazeLogger() *log.Logger {
+	lFile := os.Getenv("LINKO_LOG_FILE")
+	if lFile == "" {
+		return log.New(os.Stderr, "", log.LstdFlags)
+	}
 
-	st, err := store.New(dataDir, standardLogger)
+	f, err := os.OpenFile(lFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
-		standardLogger.Printf("failed to create store: %v", err)
+		log.Fatalf("Could not open file for logging %v", err)
+	}
+
+	mw := io.MultiWriter(os.Stderr, f)
+
+	return log.New(mw, "", log.LstdFlags)
+}
+
+func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir string) int {
+	logger := initiliazeLogger()
+
+	st, err := store.New(dataDir, logger)
+	if err != nil {
+		logger.Printf("failed to create store: %v", err)
 		return 1
 	}
-	standardLogger.Printf("Linko is running on http://localhost:%d", httpPort)
-	s := newServer(*st, httpPort, cancel, accessLogger)
+	logger.Printf("Linko is running on http://localhost:%d", httpPort)
+	s := newServer(*st, httpPort, cancel, logger)
 	var serverErr error
 	go func() {
 		serverErr = s.start()
@@ -47,14 +62,14 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 	defer cancel()
 
 	if err := s.shutdown(shutdownCtx); err != nil {
-		standardLogger.Printf("failed to shutdown server: %v", err)
+		logger.Printf("failed to shutdown server: %v", err)
 		return 1
 	}
 	if serverErr != nil {
-		standardLogger.Printf("server error: %v", serverErr)
+		logger.Printf("server error: %v", serverErr)
 		return 1
 	}
 
-	standardLogger.Printf("Linko is shutting down")
+	logger.Printf("Linko is shutting down")
 	return 0
 }
