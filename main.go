@@ -12,15 +12,12 @@ import (
 	"boot.dev/linko/internal/store"
 )
 
-var logger *log.Logger
-
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 
 	httpPort := flag.Int("port", 8899, "port to listen on")
 	dataDir := flag.String("data", "./data", "directory to store data")
 	flag.Parse()
-	logger = log.New(os.Stderr, "DEBUG: ", log.LstdFlags)
 
 	status := run(ctx, cancel, *httpPort, *dataDir)
 	cancel()
@@ -28,13 +25,17 @@ func main() {
 }
 
 func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir string) int {
-	st, err := store.New(dataDir)
+	f, err := os.OpenFile("linko.access.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	accessLogger := log.New(f, "INFO: ", log.LstdFlags)
+	standardLogger := log.New(os.Stderr, "DEBUG: ", log.LstdFlags)
+
+	st, err := store.New(dataDir, standardLogger)
 	if err != nil {
-		logger.Printf("failed to create store: %v", err)
+		standardLogger.Printf("failed to create store: %v", err)
 		return 1
 	}
-	logger.Printf("Linko is running on http://localhost:%d", httpPort)
-	s := newServer(*st, httpPort, cancel)
+	standardLogger.Printf("Linko is running on http://localhost:%d", httpPort)
+	s := newServer(*st, httpPort, cancel, accessLogger)
 	var serverErr error
 	go func() {
 		serverErr = s.start()
@@ -45,14 +46,14 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 	defer cancel()
 
 	if err := s.shutdown(shutdownCtx); err != nil {
-		logger.Printf("failed to shutdown server: %v", err)
+		standardLogger.Printf("failed to shutdown server: %v", err)
 		return 1
 	}
 	if serverErr != nil {
-		logger.Printf("server error: %v", serverErr)
+		standardLogger.Printf("server error: %v", serverErr)
 		return 1
 	}
 
-	logger.Printf("Linko is shutting down")
+	standardLogger.Printf("Linko is shutting down")
 	return 0
 }
