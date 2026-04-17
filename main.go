@@ -6,7 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -30,10 +30,11 @@ func main() {
 
 type closeFunc func() error
 
-func initiliazeLogger(logFile string) (*log.Logger, closeFunc, error) {
+func initiliazeLogger(logFile string) (*slog.Logger, closeFunc, error) {
 	lFile := os.Getenv(logFile)
 	if lFile == "" {
-		return log.New(os.Stderr, "", log.LstdFlags), func() error { return nil }, nil
+		lh := slog.NewTextHandler(os.Stderr, nil)
+		return slog.New(lh), func() error { return nil }, nil
 	}
 
 	fh, err := os.OpenFile(lFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -48,7 +49,8 @@ func initiliazeLogger(logFile string) (*log.Logger, closeFunc, error) {
 		return bfh.Flush()
 	}
 
-	return log.New(mw, "", log.LstdFlags), cf, nil
+	lh := slog.NewTextHandler(mw, nil)
+	return slog.New(lh), cf, nil
 }
 
 func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir string) int {
@@ -66,10 +68,10 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 
 	st, err := store.New(dataDir, logger)
 	if err != nil {
-		logger.Printf("failed to create store: %v", err)
+		logger.Info(fmt.Sprintf("failed to create store: %v", err))
 		return 1
 	}
-	logger.Printf("Linko is running on http://localhost:%d", httpPort)
+	logger.Info(fmt.Sprintf("Linko is running on http://localhost:%d", httpPort))
 	s := newServer(*st, httpPort, cancel, logger)
 	var serverErr error
 	go func() {
@@ -81,14 +83,14 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 	defer cancel()
 
 	if err := s.shutdown(shutdownCtx); err != nil {
-		logger.Printf("failed to shutdown server: %v", err)
+		logger.Info(fmt.Sprintf("failed to shutdown server: %v", err))
 		return 1
 	}
 	if serverErr != nil {
-		logger.Printf("server error: %v", serverErr)
+		logger.Info(fmt.Sprintf("server error: %v", serverErr))
 		return 1
 	}
 
-	logger.Printf("Linko is shutting down")
+	logger.Info(fmt.Sprintf("Linko is shutting down"))
 	return 0
 }
