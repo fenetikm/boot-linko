@@ -5,7 +5,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -31,6 +30,10 @@ func main() {
 type closeFunc func() error
 
 func initiliazeLogger(logFile string) (*slog.Logger, closeFunc, error) {
+	debugHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	})
+
 	lFile := os.Getenv(logFile)
 	if lFile == "" {
 		lh := slog.NewTextHandler(os.Stderr, nil)
@@ -42,15 +45,20 @@ func initiliazeLogger(logFile string) (*slog.Logger, closeFunc, error) {
 		return nil, func() error { return nil }, err
 	}
 	bfh := bufio.NewWriterSize(fh, 8192)
-
-	mw := io.MultiWriter(os.Stderr, bfh)
+	infoHandler := slog.NewTextHandler(bfh, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})
 
 	var cf = func() error {
 		return bfh.Flush()
 	}
 
-	lh := slog.NewTextHandler(mw, nil)
-	return slog.New(lh), cf, nil
+	logger := slog.New(slog.NewMultiHandler(
+		debugHandler,
+		infoHandler,
+	))
+
+	return logger, cf, nil
 }
 
 func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir string) int {
@@ -68,10 +76,10 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 
 	st, err := store.New(dataDir, logger)
 	if err != nil {
-		logger.Info(fmt.Sprintf("failed to create store: %v", err))
+		logger.Error(fmt.Sprintf("failed to create store: %v", err))
 		return 1
 	}
-	logger.Info(fmt.Sprintf("Linko is running on http://localhost:%d", httpPort))
+	logger.Debug(fmt.Sprintf("Linko is running on http://localhost:%d", httpPort))
 	s := newServer(*st, httpPort, cancel, logger)
 	var serverErr error
 	go func() {
@@ -83,7 +91,7 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 	defer cancel()
 
 	if err := s.shutdown(shutdownCtx); err != nil {
-		logger.Info(fmt.Sprintf("failed to shutdown server: %v", err))
+		logger.Error(fmt.Sprintf("failed to shutdown server: %v", err))
 		return 1
 	}
 	if serverErr != nil {
@@ -91,6 +99,6 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 		return 1
 	}
 
-	logger.Info(fmt.Sprintf("Linko is shutting down"))
+	logger.Debug(fmt.Sprintf("Linko is shutting down"))
 	return 0
 }
