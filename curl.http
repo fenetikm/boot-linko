@@ -1,0 +1,11 @@
+### this below doesn't work, instead:
+curl -X POST http://localhost:8899/api/shorten -u frodo:ofTheNineFingers -F "url=https://www.boot.dev/blog/golang"
+
+### Shorten link for frodo
+POST http://localhost:8899/api/shorten
+Authorization: Basic ZnJvZG86b2ZUaGVOaW5lRmluZ2Vycw==
+Content-Type: application/x-www-form-urlencoded
+
+{
+  "url": "https://www.boot.dev/blog/golang"
+}
