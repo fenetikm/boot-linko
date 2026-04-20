@@ -27,11 +27,23 @@ func main() {
 	os.Exit(status)
 }
 
+func replaceAttr(groups []string, a slog.Attr) slog.Attr {
+	if a.Key == "error" {
+		err, ok := a.Value.Any().(error)
+		if !ok {
+			return a
+		}
+		return slog.String("error", fmt.Sprintf("%+v", err))
+	}
+	return a
+}
+
 type closeFunc func() error
 
 func initiliazeLogger(logFile string) (*slog.Logger, closeFunc, error) {
 	debugHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+		Level:       slog.LevelDebug,
+		ReplaceAttr: replaceAttr,
 	})
 
 	lFile := os.Getenv(logFile)
@@ -46,7 +58,8 @@ func initiliazeLogger(logFile string) (*slog.Logger, closeFunc, error) {
 	}
 	bfh := bufio.NewWriterSize(fh, 8192)
 	infoHandler := slog.NewJSONHandler(bfh, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level:       slog.LevelInfo,
+		ReplaceAttr: replaceAttr,
 	})
 
 	var cf = func() error {
