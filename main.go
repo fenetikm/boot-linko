@@ -77,6 +77,12 @@ func replaceAttr(groups []string, a slog.Attr) slog.Attr {
 
 type closeFunc func() error
 
+const logContextKey contextKey = "log_context"
+
+type LogContext struct {
+	Username string
+}
+
 func initiliazeLogger(logFile string) (*slog.Logger, closeFunc, error) {
 	debugHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level:       slog.LevelDebug,
