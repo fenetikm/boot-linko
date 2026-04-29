@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -89,6 +90,10 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 				slog.Int("response_body_bytes", spyWriter.bytesWritten),
 			}
 
+			if r.Header.Get("X-Request-ID") != "" {
+				attrs = append(attrs, slog.String("request_id", r.Header.Get("X-Request-ID")))
+			}
+
 			if lc.Username != "" {
 				attrs = append(attrs, slog.String("user", lc.Username))
 			}
@@ -102,12 +107,25 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
+func requestID() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id := r.Header.Get("X-Request-ID")
+			if id == "" {
+				id = rand.Text()
+			}
+			w.Header().Set("X-Request-ID", id)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func newServer(store store.Store, port int, cancel context.CancelFunc, l *slog.Logger) *server {
 	mux := http.NewServeMux()
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
-		Handler: requestLogger(l)(mux),
+		Handler: requestID()(requestLogger(l)(mux)),
 	}
 
 	s := &server{
