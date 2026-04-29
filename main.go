@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -18,6 +17,7 @@ import (
 	"github.com/lmittmann/tint"
 	"github.com/mattn/go-isatty"
 	pkgerr "github.com/pkg/errors"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 func main() {
@@ -80,37 +80,60 @@ func replaceAttr(groups []string, a slog.Attr) slog.Attr {
 type closeFunc func() error
 
 func initiliazeLogger(logFile string) (*slog.Logger, closeFunc, error) {
-	noColour := !isatty.IsTerminal(os.Stderr.Fd()) && !isatty.IsCygwinTerminal(os.Stderr.Fd())
+	handlers := []slog.Handler{
+		tint.NewHandler(os.Stderr, &tint.Options{
+			Level:       slog.LevelDebug,
+			ReplaceAttr: replaceAttr,
+			NoColor:     !isatty.IsTerminal(os.Stderr.Fd()) && !isatty.IsCygwinTerminal(os.Stderr.Fd()),
+		}),
+	}
+	closers := []closeFunc{}
 
-	debugHandler := tint.NewHandler(os.Stderr, &tint.Options{
-		Level:       slog.LevelDebug,
-		ReplaceAttr: replaceAttr,
-		NoColor:     noColour,
-	})
-
-	lFile := os.Getenv(logFile)
-	if lFile == "" {
-		return slog.New(debugHandler), func() error { return nil }, nil
+	if logFile != "" {
+		rotatingFile := &lumberjack.Logger{
+			Filename:   logFile,
+			MaxSize:    1,
+			MaxAge:     28,
+			MaxBackups: 10,
+			LocalTime:  false,
+			Compress:   true,
+		}
+		handlers = append(handlers, slog.NewJSONHandler(rotatingFile, &slog.HandlerOptions{
+			ReplaceAttr: replaceAttr,
+		}))
+		closers = append(closers, func() error {
+			if err := rotatingFile.Close(); err != nil {
+				return fmt.Errorf("failed to close log file: %w", err)
+			}
+			return nil
+		})
 	}
 
-	fh, err := os.OpenFile(lFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	closer := func() error {
+		var errs []error
+		for _, close := range closers {
+			if err := close(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(errs...)
+	}
+
+	return slog.New(slog.NewMultiHandler(handlers...)), closer, nil
+}
+
+func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir string) int {
+	logger, cf, err := initiliazeLogger(os.Getenv("LINKO_LOG_FILE"))
 	if err != nil {
-		return nil, func() error { return nil }, err
+		fmt.Fprintf(os.Stderr, "Could not initialise logger: %v", err)
+		return 1
 	}
-	bfh := bufio.NewWriterSize(fh, 8192)
-	infoHandler := slog.NewJSONHandler(bfh, &slog.HandlerOptions{
-		Level:       slog.LevelInfo,
-		ReplaceAttr: replaceAttr,
-	})
+	defer func() {
+		if err := cf(); err != nil {
+			fmt.Fprintf(os.Stderr, "Could not clean up logger on close: %v", err)
+		}
+	}()
 
-	var cf = func() error {
-		return bfh.Flush()
-	}
-
-	logger := slog.New(slog.NewMultiHandler(
-		debugHandler,
-		infoHandler,
-	))
 	env := os.Getenv("ENV")
 	hostname, _ := os.Hostname()
 	logger = logger.With(
@@ -119,22 +142,6 @@ func initiliazeLogger(logFile string) (*slog.Logger, closeFunc, error) {
 		slog.String("env", env),
 		slog.String("hostname", hostname),
 	)
-
-	return logger, cf, nil
-}
-
-func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir string) int {
-	logger, cf, err := initiliazeLogger("LINKO_LOG_FILE")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Could not initialise logger: %v", err)
-		return 1
-	}
-	defer func() {
-		err := cf()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Could not clean up logger on close: %v", err)
-		}
-	}()
 
 	st, err := store.New(dataDir, logger)
 	if err != nil {
