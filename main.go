@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 	"time"
 
@@ -43,6 +44,8 @@ type multiError interface {
 	Unwrap() []error
 }
 
+var redactedKeys = []string{"password", "key", "apikey", "secret", "pin", "creditcardno", "user"}
+
 func errorAttrs(err error) []slog.Attr {
 	attrs := []slog.Attr{
 		{Key: "message", Value: slog.StringValue(err.Error())},
@@ -58,6 +61,10 @@ func errorAttrs(err error) []slog.Attr {
 }
 
 func replaceAttr(groups []string, a slog.Attr) slog.Attr {
+	if slices.Contains(redactedKeys, a.Key) {
+		return slog.String(a.Key, "[REDACTED]")
+	}
+
 	if a.Key == "error" {
 		err, ok := a.Value.Any().(error)
 		if !ok {
