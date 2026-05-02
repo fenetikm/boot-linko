@@ -74,6 +74,7 @@ func replaceAttr(groups []string, a slog.Attr) slog.Attr {
 
 		return slog.GroupAttrs("error", errorAttrs(err)...)
 	}
+
 	return a
 }
 
