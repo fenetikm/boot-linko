@@ -10,9 +10,12 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"boot.dev/linko/internal/store"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -144,6 +147,43 @@ func requestID() func(http.Handler) http.Handler {
 	}
 }
 
+var httpRequestsTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "http_requests_total",
+		Help: "Total number of HTTP requests.",
+	},
+	[]string{"method", "path", "status"},
+)
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func metricsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := &statusRecorder{
+			ResponseWriter: w,
+			status:         http.StatusOK,
+		}
+
+		next.ServeHTTP(rec, r)
+
+		path := r.URL.Path
+		method := r.Method
+		status := strconv.Itoa(rec.status)
+
+		httpRequestsTotal.
+			WithLabelValues(method, path, status).
+			Inc()
+	})
+}
+
 func newServer(store store.Store, port int, cancel context.CancelFunc, l *slog.Logger) *server {
 	mux := http.NewServeMux()
 
@@ -159,14 +199,14 @@ func newServer(store store.Store, port int, cancel context.CancelFunc, l *slog.L
 		logger:     l,
 	}
 
-	mux.HandleFunc("GET /", s.handlerIndex)
-	mux.Handle("POST /api/login", s.authMiddleware(http.HandlerFunc(s.handlerLogin)))
-	mux.Handle("POST /api/shorten", s.authMiddleware(http.HandlerFunc(s.handlerShortenLink)))
-	mux.Handle("GET /api/stats", s.authMiddleware(http.HandlerFunc(s.handlerStats)))
+	mux.Handle("GET /", metricsMiddleware(http.HandlerFunc(s.handlerIndex)))
+	mux.Handle("POST /api/login", metricsMiddleware(s.authMiddleware(http.HandlerFunc(s.handlerLogin))))
+	mux.Handle("POST /api/shorten", metricsMiddleware(s.authMiddleware(http.HandlerFunc(s.handlerShortenLink))))
+	mux.Handle("GET /api/stats", metricsMiddleware(s.authMiddleware(http.HandlerFunc(s.handlerStats))))
 	mux.Handle("GET /api/urls", s.authMiddleware(http.HandlerFunc(s.handlerListURLs)))
-	mux.HandleFunc("GET /{shortCode}", s.handlerRedirect)
-	mux.HandleFunc("POST /admin/shutdown", s.handlerShutdown)
-	mux.Handle("GET /metrics", promhttp.Handler())
+	mux.Handle("GET /{shortCode}", metricsMiddleware(http.HandlerFunc(s.handlerRedirect)))
+	mux.Handle("POST /admin/shutdown", metricsMiddleware(http.HandlerFunc(s.handlerShutdown)))
+	mux.Handle("GET /metrics", metricsMiddleware(promhttp.Handler()))
 
 	return s
 }
